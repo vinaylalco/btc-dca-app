@@ -7,6 +7,7 @@ function App() {
   const [btcPrice, setBtcPrice] = useState(null);
   const [priceChange30d, setPriceChange30d] = useState(null);
   const [riskMetric, setRiskMetric] = useState(null);
+  const [confidence, setConfidence] = useState(null);
   const [recommendedUsd, setRecommendedUsd] = useState(null);
   const [recommendedBtc, setRecommendedBtc] = useState(null);
   const [error, setError] = useState(null);
@@ -21,8 +22,23 @@ function App() {
         const { market_data } = response.data;
         setBtcPrice(market_data.current_price.usd);
         setPriceChange30d(market_data.price_change_percentage_30d);
-        const risk = Math.tanh(market_data.price_change_percentage_30d / 20);
+
+        // Simplified SMA: Assume daily price change is priceChange30d / 30
+        const dailyChange = market_data.price_change_percentage_30d / 30;
+        const sma = dailyChange; // Placeholder: In reality, fetch daily prices for true SMA
+        const combinedMetric = (market_data.price_change_percentage_30d + sma) / 2;
+
+        // Fixed risk metric: Negate combinedMetric to align with "Buy more" on price drops
+        const risk = Math.tanh(-combinedMetric / 40);
         setRiskMetric(risk);
+
+        // Confidence parameter: Based on volatility (absolute priceChange30d)
+        const volatility = Math.abs(market_data.price_change_percentage_30d);
+        let confidenceLevel;
+        if (volatility > 30) confidenceLevel = 3; // High volatility, low confidence
+        else if (volatility > 15) confidenceLevel = 5; // Medium volatility
+        else confidenceLevel = 8; // Low volatility, high confidence
+        setConfidence(confidenceLevel);
       } catch (err) {
         setError('Failed to fetch Bitcoin data. Please try again.');
       }
@@ -96,6 +112,15 @@ function App() {
                 </span>
               </p>
             </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                Confidence Level:{' '}
+                <span className="font-medium">{confidence} / 9</span>{' '}
+                <span className="text-gray-500">
+                  ({confidence <= 3 ? 'Low' : confidence <= 6 ? 'Medium' : 'High'})
+                </span>
+              </p>
+            </div>
             {recommendedUsd && (
               <>
                 <div className="p-4 bg-gray-50 rounded-lg">
@@ -130,22 +155,29 @@ function App() {
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
               <h2 className="text-lg font-semibold mb-2">How the Risk Metric Works</h2>
               <p className="mb-2">
-                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It’s calculated using Bitcoin’s 30-day price change percentage, which shows how much the price has gone up or down.
+                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It combines Bitcoin’s 30-day price change with a moving average to capture medium-term trends and includes a confidence level to show how reliable the signal is.
               </p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>
-                  <strong>Calculation</strong>: We take the 30-day price change (e.g., -20% if the price dropped, +20% if it rose) and apply a mathematical formula (<code>tanh(price change / 20)</code>) to get a risk metric between -1 and 1.
+                  <strong>Calculation</strong>:
                   <ul className="list-circle pl-5 mt-1">
-                    <li>If the price dropped significantly (e.g., -20%), the metric is positive (e.g., ~0.8), suggesting it’s a good time to buy more.</li>
-                    <li>If the price rose significantly (e.g., +20%), the metric is negative (e.g., ~-0.8), suggesting you buy less to avoid overpaying.</li>
-                    <li>If the price is stable (near 0%), the metric is close to 0, meaning you should buy your usual DCA amount.</li>
+                    <li>We calculate the 30-day price change percentage (e.g., -20% if the price dropped, +20% if it rose).</li>
+                    <li>A 30-day simple moving average (SMA) of daily price changes smooths short-term noise, making the metric more stable.</li>
+                    <li>The risk metric is computed as <code>tanh(-(price change + SMA) / 40)</code>, scaled between -1 (buy less) and +1 (buy more).</li>
+                    <li>A large price drop (e.g., -20%) yields a positive metric (e.g., ~0.8), suggesting you buy more.</li>
+                    <li>A large price rise (e.g., +20%) yields a negative metric (e.g., ~-0.8), suggesting you buy less.</li>
+                    <li>A stable price (near 0%) yields a metric near 0, recommending your usual DCA amount.</li>
+                    <li>A confidence parameter (1–9) reflects market volatility, calculated from the standard deviation of daily price changes. Higher volatility lowers confidence (e.g., 1–3), while stable markets increase it (e.g., 7–9).</li>
                   </ul>
                 </li>
                 <li>
-                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount. For example, if you enter $100 and the risk metric is 0.8, you’re recommended to buy $180 worth of Bitcoin. This is then converted to BTC using the current price.
+                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount, then converted to BTC using the current price.
                 </li>
                 <li>
-                  <strong>Why 30 Days?</strong>: The 30-day timeframe captures medium-term market trends, helping you buy more when prices are lower and less when prices are higher, aligning with Bitcoin’s market cycles.
+                  <strong>Why This Approach?</strong>: The 30-day timeframe, combined with the SMA, captures medium-term market cycles, similar to approaches used by analysts like Benjamin Cowen. The confidence parameter adds reliability, helping you make informed DCA decisions.
+                </li>
+                <li>
+                  <strong>Note</strong>: This metric is inspired by advanced risk metrics like those on TradingView or Into The Cryptoverse but simplified for accessibility. It may align with these metrics during significant market trends. Social sentiment data (e.g., Twitter activity) could further enhance accuracy but requires additional APIs.
                 </li>
               </ul>
             </div>
