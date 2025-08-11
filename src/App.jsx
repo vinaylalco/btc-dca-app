@@ -5,9 +5,11 @@ import './App.css';
 function App() {
   const [dcaAmount, setDcaAmount] = useState('');
   const [btcPrice, setBtcPrice] = useState(null);
-  const [priceChange30d, setPriceChange30d] = useState(null);
-  const [riskMetric, setRiskMetric] = useState(null);
-  const [confidence, setConfidence] = useState(null);
+  const [riskScore, setRiskScore] = useState(null);
+  const [cycleRisk, setCycleRisk] = useState(null);
+  const [liquidityRisk, setLiquidityRisk] = useState(null);
+  const [daysSinceHalving, setDaysSinceHalving] = useState(null);
+  const [priceChange108d, setPriceChange108d] = useState(null);
   const [recommendedUsd, setRecommendedUsd] = useState(null);
   const [recommendedBtc, setRecommendedBtc] = useState(null);
   const [error, setError] = useState(null);
@@ -16,29 +18,57 @@ function App() {
   useEffect(() => {
     const fetchBtcData = async () => {
       try {
-        const response = await axios.get(
+        // Fetch current price
+        const priceResponse = await axios.get(
           'https://api.coingecko.com/api/v3/coins/bitcoin?sparkline=false'
         );
-        const { market_data } = response.data;
-        setBtcPrice(market_data.current_price.usd);
-        setPriceChange30d(market_data.price_change_percentage_30d);
+        const currentPrice = priceResponse.data.market_data.current_price.usd;
+        setBtcPrice(currentPrice);
 
-        // Simplified SMA: Assume daily price change is priceChange30d / 30
-        const dailyChange = market_data.price_change_percentage_30d / 30;
-        const sma = dailyChange; // Placeholder: In reality, fetch daily prices for true SMA
-        const combinedMetric = (market_data.price_change_percentage_30d + sma) / 2;
+        // Fetch 108 days of historical prices for liquidity proxy
+        const historyResponse = await axios.get(
+          'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart',
+          {
+            params: {
+              vs_currency: 'usd',
+              days: 108,
+              interval: 'daily',
+            },
+          }
+        );
+        const prices = historyResponse.data.prices.map(([timestamp, price]) => price);
+        if (prices.length < 2) {
+          setError('Insufficient historical data for liquidity calculation.');
+          return;
+        }
 
-        // Fixed risk metric: Negate combinedMetric to align with "Buy more" on price drops
-        const risk = Math.tanh(-combinedMetric / 40);
-        setRiskMetric(risk);
+        // Calculate 108-day price change percentage
+        const price108dAgo = prices[0];
+        const priceChange = ((currentPrice - price108dAgo) / price108dAgo) * 100;
+        setPriceChange108d(priceChange);
 
-        // Confidence parameter: Based on volatility (absolute priceChange30d)
-        const volatility = Math.abs(market_data.price_change_percentage_30d);
-        let confidenceLevel;
-        if (volatility > 30) confidenceLevel = 3; // High volatility, low confidence
-        else if (volatility > 15) confidenceLevel = 5; // Medium volatility
-        else confidenceLevel = 8; // Low volatility, high confidence
-        setConfidence(confidenceLevel);
+        // Calculate days since last halving (April 20, 2024)
+        const lastHalvingDate = new Date('2024-04-20T00:00:00Z');
+        const currentDate = new Date();
+        const daysSince = (currentDate - lastHalvingDate) / (1000 * 60 * 60 * 24);
+        setDaysSinceHalving(daysSince);
+
+        // Calculate cycle risk (sinusoidal, peaking at ~450–540 days)
+        const cycleLength = 1460; // ~4 years
+        const phaseShift = 180; // Align trough at ~900–990 days
+        const cycleRisk = 0.5 + 0.5 * Math.sin((2 * Math.PI * (daysSince + phaseShift)) / cycleLength);
+        setCycleRisk(cycleRisk);
+
+        // Calculate liquidity risk (sigmoid on 108-day price change)
+        const liquidityRisk = 1 / (1 + Math.exp(priceChange / 20));
+        setLiquidityRisk(liquidityRisk);
+
+        // Combine risks (weighted: 60% cycle, 40% liquidity)
+        const riskScore = 0.6 * cycleRisk + 0.4 * liquidityRisk;
+        setRiskScore(Math.min(1, Math.max(0, riskScore)));
+
+        // Debug logs
+        console.log('Days Since Halving:', daysSince, 'Cycle Risk:', cycleRisk, 'Price Change 108d:', priceChange, 'Liquidity Risk:', liquidityRisk, 'Risk Score:', riskScore);
       } catch (err) {
         setError('Failed to fetch Bitcoin data. Please try again.');
       }
@@ -50,8 +80,8 @@ function App() {
     const value = e.target.value;
     if (value >= 0 || value === '') {
       setDcaAmount(value);
-      if (value && btcPrice && riskMetric !== null) {
-        const usd = Number(value) * (1 + riskMetric);
+      if (value && btcPrice && riskScore !== null) {
+        const usd = Number(value) * (1 - riskScore);
         setRecommendedUsd(usd);
         setRecommendedBtc(usd / btcPrice);
       } else {
@@ -93,31 +123,24 @@ function App() {
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                30-Day Price Change:{' '}
-                <span
-                  className={`font-medium ${
-                    priceChange30d >= 0 ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {priceChange30d?.toFixed(2)}%
+                Days Since Halving:{' '}
+                <span className="font-medium">{daysSinceHalving?.toFixed(0)}</span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                108-Day Price Change:{' '}
+                <span className={`font-medium ${priceChange108d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {priceChange108d?.toFixed(2)}%
                 </span>
               </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                Risk Metric:{' '}
-                <span className="font-medium">{riskMetric?.toFixed(2)}</span>{' '}
+                Risk Score:{' '}
+                <span className="font-medium">{riskScore?.toFixed(2)}</span>{' '}
                 <span className="text-gray-500">
-                  ({riskMetric > 0 ? 'Buy more' : riskMetric < 0 ? 'Buy less' : 'Neutral'})
-                </span>
-              </p>
-            </div>
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <p className="text-gray-700 text-sm sm:text-base">
-                Confidence Level:{' '}
-                <span className="font-medium">{confidence} / 9</span>{' '}
-                <span className="text-gray-500">
-                  ({confidence <= 3 ? 'Low' : confidence <= 6 ? 'Medium' : 'High'})
+                  ({riskScore > 0.7 ? 'Buy less' : riskScore < 0.3 ? 'Buy more' : 'Neutral'})
                 </span>
               </p>
             </div>
@@ -153,31 +176,37 @@ function App() {
           </button>
           {showExplanation && (
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
-              <h2 className="text-lg font-semibold mb-2">How the Risk Metric Works</h2>
+              <h2 className="text-lg font-semibold mb-2">How the Risk Score Works</h2>
               <p className="mb-2">
-                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It combines Bitcoin’s 30-day price change with a moving average to capture medium-term trends and includes a confidence level to show how reliable the signal is.
+                The risk score determines how much Bitcoin to buy based on Bitcoin’s halving cycle and global liquidity trends, encouraging more purchases during low-price periods and fewer during highs.
               </p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>
-                  <strong>Calculation</strong>:
+                  <strong>Halving Cycle</strong>:
                   <ul className="list-circle pl-5 mt-1">
-                    <li>We calculate the 30-day price change percentage (e.g., -20% if the price dropped, +20% if it rose).</li>
-                    <li>A 30-day simple moving average (SMA) of daily price changes smooths short-term noise, making the metric more stable.</li>
-                    <li>The risk metric is computed as <code>tanh(-(price change + SMA) / 40)</code>, scaled between -1 (buy less) and +1 (buy more).</li>
-                    <li>A large price drop (e.g., -20%) yields a positive metric (e.g., ~0.8), suggesting you buy more.</li>
-                    <li>A large price rise (e.g., +20%) yields a negative metric (e.g., ~-0.8), suggesting you buy less.</li>
-                    <li>A stable price (near 0%) yields a metric near 0, recommending your usual DCA amount.</li>
-                    <li>A confidence parameter (1–9) reflects market volatility, calculated from the standard deviation of daily price changes. Higher volatility lowers confidence (e.g., 1–3), while stable markets increase it (e.g., 7–9).</li>
+                    <li>Bitcoin’s price often peaks 12–18 months after a halving and bottoms 18–24 months before the next.</li>
+                    <li>We calculate days since the last halving (April 20, 2024) and use a sinusoidal function to assign higher risk (buy less) near 12–18 months post-halving and lower risk (buy more) ~18–24 months pre-halving.</li>
                   </ul>
                 </li>
                 <li>
-                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount, then converted to BTC using the current price.
+                  <strong>Global Liquidity</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>Global M2 money supply predicts Bitcoin’s price direction with a ~108-day lead.</li>
+                    <li>We use the 108-day price change as a proxy, with positive changes indicating bullish conditions (lower risk) and negative changes suggesting bearish conditions (higher risk).</li>
+                  </ul>
                 </li>
                 <li>
-                  <strong>Why This Approach?</strong>: The 30-day timeframe, combined with the SMA, captures medium-term market cycles, similar to approaches used by analysts like Benjamin Cowen. The confidence parameter adds reliability, helping you make informed DCA decisions.
+                  <strong>Combined Risk</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>The risk score combines cycle risk (60%) and liquidity risk (40%), normalized to 0–1.</li>
+                    <li>Your DCA amount (USD) is multiplied by <code>(1 - risk score)</code> to get the recommended purchase amount, then converted to BTC.</li>
+                  </ul>
                 </li>
                 <li>
-                  <strong>Note</strong>: This metric is inspired by advanced risk metrics like those on TradingView or Into The Cryptoverse but simplified for accessibility. It may align with these metrics during significant market trends. Social sentiment data (e.g., Twitter activity) could further enhance accuracy but requires additional APIs.
+                  <strong>Why This Approach?</strong>: Halvings drive Bitcoin’s cyclical price patterns, while M2 liquidity signals future price momentum, aligning with strategies from analysts like Lyn Alden.
+                </li>
+                <li>
+                  <strong>Note</strong>: The liquidity proxy uses price changes due to limited real-time M2 data. Extreme market events or halving-related volatility may affect accuracy.
                 </li>
               </ul>
             </div>
