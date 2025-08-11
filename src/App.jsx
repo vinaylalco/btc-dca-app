@@ -1,57 +1,84 @@
 import { useState, useEffect } from 'react';
+import { Routes, Route, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import axios from 'axios';
+import Signup from './Signup';
+import Admin from './Admin';
 import './App.css';
 
-function App() {
+function Calculator() {
   const [dcaAmount, setDcaAmount] = useState('');
   const [btcPrice, setBtcPrice] = useState(null);
-  const [priceChange30d, setPriceChange30d] = useState(null);
-  const [riskMetric, setRiskMetric] = useState(null);
-  const [confidence, setConfidence] = useState(null);
+  const [riskScore, setRiskScore] = useState(null);
+  const [cycleRisk, setCycleRisk] = useState(null);
+  const [liquidityRisk, setLiquidityRisk] = useState(null);
+  const [daysSinceHalving, setDaysSinceHalving] = useState(null);
+  const [priceChange108d, setPriceChange108d] = useState(null);
   const [recommendedUsd, setRecommendedUsd] = useState(null);
   const [recommendedBtc, setRecommendedBtc] = useState(null);
   const [error, setError] = useState(null);
   const [showExplanation, setShowExplanation] = useState(false);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const fetchBtcData = async () => {
       try {
-        const response = await axios.get(
+        const priceResponse = await axios.get(
           'https://api.coingecko.com/api/v3/coins/bitcoin?sparkline=false'
         );
-        const { market_data } = response.data;
-        setBtcPrice(market_data.current_price.usd);
-        setPriceChange30d(market_data.price_change_percentage_30d);
+        const currentPrice = priceResponse.data.market_data.current_price.usd;
+        setBtcPrice(currentPrice);
 
-        // Simplified SMA: Assume daily price change is priceChange30d / 30
-        const dailyChange = market_data.price_change_percentage_30d / 30;
-        const sma = dailyChange; // Placeholder: In reality, fetch daily prices for true SMA
-        const combinedMetric = (market_data.price_change_percentage_30d + sma) / 2;
+        const historyResponse = await axios.get(
+          'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart',
+          {
+            params: {
+              vs_currency: 'usd',
+              days: 108,
+              interval: 'daily',
+            },
+          }
+        );
+        const prices = historyResponse.data.prices.map(([timestamp, price]) => price);
+        if (prices.length < 2) {
+          setError(t('calculator.error'));
+          return;
+        }
 
-        // Fixed risk metric: Negate combinedMetric to align with "Buy more" on price drops
-        const risk = Math.tanh(-combinedMetric / 40);
-        setRiskMetric(risk);
+        const price108dAgo = prices[0];
+        const priceChange = ((currentPrice - price108dAgo) / price108dAgo) * 100;
+        setPriceChange108d(priceChange);
 
-        // Confidence parameter: Based on volatility (absolute priceChange30d)
-        const volatility = Math.abs(market_data.price_change_percentage_30d);
-        let confidenceLevel;
-        if (volatility > 30) confidenceLevel = 3; // High volatility, low confidence
-        else if (volatility > 15) confidenceLevel = 5; // Medium volatility
-        else confidenceLevel = 8; // Low volatility, high confidence
-        setConfidence(confidenceLevel);
+        const lastHalvingDate = new Date('2024-04-20T00:00:00Z');
+        const currentDate = new Date();
+        const daysSince = (currentDate - lastHalvingDate) / (1000 * 60 * 60 * 24);
+        setDaysSinceHalving(daysSince);
+
+        const cycleLength = 1460;
+        const phaseShift = 180;
+        const cycleRisk = 0.5 + 0.5 * Math.sin((2 * Math.PI * (daysSince + phaseShift)) / cycleLength);
+        setCycleRisk(cycleRisk);
+
+        const liquidityRisk = 1 / (1 + Math.exp(priceChange / 20));
+        setLiquidityRisk(liquidityRisk);
+
+        const riskScore = 0.6 * cycleRisk + 0.4 * liquidityRisk;
+        setRiskScore(Math.min(1, Math.max(0, riskScore)));
+
+        console.log('Days Since Halving:', daysSince, 'Cycle Risk:', cycleRisk, 'Price Change 108d:', priceChange, 'Liquidity Risk:', liquidityRisk, 'Risk Score:', riskScore);
       } catch (err) {
-        setError('Failed to fetch Bitcoin data. Please try again.');
+        setError(t('calculator.error'));
       }
     };
     fetchBtcData();
-  }, []);
+  }, [t]);
 
   const handleDcaChange = (e) => {
     const value = e.target.value;
     if (value >= 0 || value === '') {
       setDcaAmount(value);
-      if (value && btcPrice && riskMetric !== null) {
-        const usd = Number(value) * (1 + riskMetric);
+      if (value && btcPrice && riskScore !== null) {
+        const usd = Number(value) * (1 - riskScore);
         setRecommendedUsd(usd);
         setRecommendedBtc(usd / btcPrice);
       } else {
@@ -65,20 +92,20 @@ function App() {
     <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 sm:p-6 lg:p-8">
       <div className="bg-white p-6 sm:p-8 rounded-lg shadow-lg w-full max-w-md sm:max-w-lg lg:max-w-4xl">
         <h1 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-gray-800">
-          Bitcoin DCA Calculator
+          {t('title')}
         </h1>
         {error && (
           <p className="text-red-500 text-center mb-6 font-medium">{error}</p>
         )}
         <div className="mb-6">
           <label className="block text-gray-700 font-medium mb-2 text-sm sm:text-base">
-            Enter DCA Amount (USD):
+            {t('calculator.dcaLabel')}
           </label>
           <input
             type="number"
             value={dcaAmount}
             onChange={handleDcaChange}
-            placeholder="e.g., 100"
+            placeholder={t('calculator.placeholder')}
             min="0"
             className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
           />
@@ -87,37 +114,30 @@ function App() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                Current BTC Price:{' '}
+                {t('calculator.price')}{' '}
                 <span className="font-medium">${btcPrice.toLocaleString()}</span>
               </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                30-Day Price Change:{' '}
-                <span
-                  className={`font-medium ${
-                    priceChange30d >= 0 ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {priceChange30d?.toFixed(2)}%
+                {t('calculator.daysSinceHalving')}{' '}
+                <span className="font-medium">{daysSinceHalving?.toFixed(0)}</span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                {t('calculator.priceChange108d')}{' '}
+                <span className={`font-medium ${priceChange108d >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                  {priceChange108d?.toFixed(2)}%
                 </span>
               </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                Risk Metric:{' '}
-                <span className="font-medium">{riskMetric?.toFixed(2)}</span>{' '}
+                {t('calculator.riskScore')}{' '}
+                <span className="font-medium">{riskScore?.toFixed(2)}</span>{' '}
                 <span className="text-gray-500">
-                  ({riskMetric > 0 ? 'Buy more' : riskMetric < 0 ? 'Buy less' : 'Neutral'})
-                </span>
-              </p>
-            </div>
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <p className="text-gray-700 text-sm sm:text-base">
-                Confidence Level:{' '}
-                <span className="font-medium">{confidence} / 9</span>{' '}
-                <span className="text-gray-500">
-                  ({confidence <= 3 ? 'Low' : confidence <= 6 ? 'Medium' : 'High'})
+                  ({riskScore > 0.7 ? t('calculator.riskBuyLess') : riskScore < 0.3 ? t('calculator.riskBuyMore') : t('calculator.riskNeutral')})
                 </span>
               </p>
             </div>
@@ -125,13 +145,13 @@ function App() {
               <>
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <p className="text-gray-700 text-sm sm:text-base">
-                    Recommended Purchase:{' '}
+                    {t('calculator.recommendedPurchase')}{' '}
                     <span className="font-medium">${recommendedUsd.toFixed(2)}</span>
                   </p>
                 </div>
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <p className="text-gray-700 text-sm sm:text-base">
-                    BTC Amount:{' '}
+                    {t('calculator.btcAmount')}{' '}
                     <span className="font-medium">{recommendedBtc.toFixed(8)} BTC</span>
                   </p>
                 </div>
@@ -141,7 +161,7 @@ function App() {
         )}
         {!btcPrice && !error && (
           <p className="text-gray-500 text-center text-sm sm:text-base">
-            Loading Bitcoin data...
+            {t('calculator.loading')}
           </p>
         )}
         <div className="mt-6">
@@ -149,41 +169,67 @@ function App() {
             onClick={() => setShowExplanation(!showExplanation)}
             className="w-full p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm sm:text-base"
           >
-            {showExplanation ? 'Hide Explanation' : 'How Does This Work?'}
+            {showExplanation ? t('calculator.hideExplanation') : t('calculator.explanationButton')}
           </button>
           {showExplanation && (
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
-              <h2 className="text-lg font-semibold mb-2">How the Risk Metric Works</h2>
-              <p className="mb-2">
-                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It combines Bitcoin’s 30-day price change with a moving average to capture medium-term trends and includes a confidence level to show how reliable the signal is.
-              </p>
+              <h2 className="text-lg font-semibold mb-2">{t('calculator.explanationTitle')}</h2>
+              <p className="mb-2">{t('calculator.explanationText')}</p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>
-                  <strong>Calculation</strong>:
+                  <strong>{t('calculator.explanationCycle')}</strong>:
                   <ul className="list-circle pl-5 mt-1">
-                    <li>We calculate the 30-day price change percentage (e.g., -20% if the price dropped, +20% if it rose).</li>
-                    <li>A 30-day simple moving average (SMA) of daily price changes smooths short-term noise, making the metric more stable.</li>
-                    <li>The risk metric is computed as <code>tanh(-(price change + SMA) / 40)</code>, scaled between -1 (buy less) and +1 (buy more).</li>
-                    <li>A large price drop (e.g., -20%) yields a positive metric (e.g., ~0.8), suggesting you buy more.</li>
-                    <li>A large price rise (e.g., +20%) yields a negative metric (e.g., ~-0.8), suggesting you buy less.</li>
-                    <li>A stable price (near 0%) yields a metric near 0, recommending your usual DCA amount.</li>
-                    <li>A confidence parameter (1–9) reflects market volatility, calculated from the standard deviation of daily price changes. Higher volatility lowers confidence (e.g., 1–3), while stable markets increase it (e.g., 7–9).</li>
+                    <li>{t('calculator.explanationCycleText')}</li>
                   </ul>
                 </li>
                 <li>
-                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount, then converted to BTC using the current price.
+                  <strong>{t('calculator.explanationLiquidity')}</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>{t('calculator.explanationLiquidityText')}</li>
+                  </ul>
                 </li>
                 <li>
-                  <strong>Why This Approach?</strong>: The 30-day timeframe, combined with the SMA, captures medium-term market cycles, similar to approaches used by analysts like Benjamin Cowen. The confidence parameter adds reliability, helping you make informed DCA decisions.
+                  <strong>{t('calculator.explanationCombined')}</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>{t('calculator.explanationCombinedText')}</li>
+                  </ul>
                 </li>
                 <li>
-                  <strong>Note</strong>: This metric is inspired by advanced risk metrics like those on TradingView or Into The Cryptoverse but simplified for accessibility. It may align with these metrics during significant market trends. Social sentiment data (e.g., Twitter activity) could further enhance accuracy but requires additional APIs.
+                  <strong>{t('calculator.explanationWhy')}</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>{t('calculator.explanationWhyText')}</li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>{t('calculator.explanationNote')}</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>{t('calculator.explanationNoteText')}</li>
+                  </ul>
                 </li>
               </ul>
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function App() {
+  const { t } = useTranslation();
+
+  return (
+    <div>
+      <nav className="nav-container">
+        <Link to="/" className="nav-link">{t('title')}</Link>
+        <Link to="/signup" className="nav-link">{t('signup.title')}</Link>
+        <Link to="/admin" className="nav-link">{t('admin.title')}</Link>
+      </nav>
+      <Routes>
+        <Route path="/" element={<Calculator />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/admin" element={<Admin />} />
+      </Routes>
     </div>
   );
 }
