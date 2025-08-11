@@ -1,0 +1,343 @@
+===== Directory Structure of /Users/vinaylal/Documents/sites/btc-dca-app/src =====
+(Note: 'tree' command not found, using 'find' to list directory structure)
+/Users/vinaylal/Documents/sites/btc-dca-app/src
+/Users/vinaylal/Documents/sites/btc-dca-app/src/combine_files.sh
+/Users/vinaylal/Documents/sites/btc-dca-app/src/combined.txt
+/Users/vinaylal/Documents/sites/btc-dca-app/src/App.css
+/Users/vinaylal/Documents/sites/btc-dca-app/src/index.css
+/Users/vinaylal/Documents/sites/btc-dca-app/src/main.jsx
+/Users/vinaylal/Documents/sites/btc-dca-app/src/App.jsx
+/Users/vinaylal/Documents/sites/btc-dca-app/src/assets
+/Users/vinaylal/Documents/sites/btc-dca-app/src/assets/react.svg
+
+===== End of Directory Structure =====
+
+===== Start of /Users/vinaylal/Documents/sites/btc-dca-app/src/App.css =====
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+-e 
+===== End of /Users/vinaylal/Documents/sites/btc-dca-app/src/App.css =====
+
+===== Start of /Users/vinaylal/Documents/sites/btc-dca-app/src/index.css =====
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  color-scheme: light dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #242424;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+a:hover {
+  color: #535bf2;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 3.2em;
+  line-height: 1.1;
+}
+
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  background-color: #1a1a1a;
+  cursor: pointer;
+  transition: border-color 0.25s;
+}
+button:hover {
+  border-color: #646cff;
+}
+button:focus,
+button:focus-visible {
+  outline: 4px auto -webkit-focus-ring-color;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #213547;
+    background-color: #ffffff;
+  }
+  a:hover {
+    color: #747bff;
+  }
+  button {
+    background-color: #f9f9f9;
+  }
+}
+-e 
+===== End of /Users/vinaylal/Documents/sites/btc-dca-app/src/index.css =====
+
+===== Start of /Users/vinaylal/Documents/sites/btc-dca-app/src/main.jsx =====
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App.jsx';
+import './index.css';
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);-e 
+===== End of /Users/vinaylal/Documents/sites/btc-dca-app/src/main.jsx =====
+
+===== Start of /Users/vinaylal/Documents/sites/btc-dca-app/src/App.jsx =====
+import { useState, useEffect } from 'react';
+import axios from 'axios';
+import './App.css';
+
+function App() {
+  const [dcaAmount, setDcaAmount] = useState('');
+  const [btcPrice, setBtcPrice] = useState(null);
+  const [priceChange30d, setPriceChange30d] = useState(null);
+  const [riskMetric, setRiskMetric] = useState(null);
+  const [confidence, setConfidence] = useState(null);
+  const [recommendedUsd, setRecommendedUsd] = useState(null);
+  const [recommendedBtc, setRecommendedBtc] = useState(null);
+  const [error, setError] = useState(null);
+  const [showExplanation, setShowExplanation] = useState(false);
+
+  useEffect(() => {
+    const fetchBtcData = async () => {
+      try {
+        const response = await axios.get(
+          'https://api.coingecko.com/api/v3/coins/bitcoin?sparkline=false'
+        );
+        const { market_data } = response.data;
+        setBtcPrice(market_data.current_price.usd);
+        setPriceChange30d(market_data.price_change_percentage_30d);
+
+        // Simplified SMA: Assume daily price change is priceChange30d / 30
+        const dailyChange = market_data.price_change_percentage_30d / 30;
+        const sma = dailyChange; // Placeholder: In reality, fetch daily prices for true SMA
+        const combinedMetric = (market_data.price_change_percentage_30d + sma) / 2;
+
+        // Fixed risk metric: Negate combinedMetric to align with "Buy more" on price drops
+        const risk = Math.tanh(-combinedMetric / 40);
+        setRiskMetric(risk);
+
+        // Confidence parameter: Based on volatility (absolute priceChange30d)
+        const volatility = Math.abs(market_data.price_change_percentage_30d);
+        let confidenceLevel;
+        if (volatility > 30) confidenceLevel = 3; // High volatility, low confidence
+        else if (volatility > 15) confidenceLevel = 5; // Medium volatility
+        else confidenceLevel = 8; // Low volatility, high confidence
+        setConfidence(confidenceLevel);
+      } catch (err) {
+        setError('Failed to fetch Bitcoin data. Please try again.');
+      }
+    };
+    fetchBtcData();
+  }, []);
+
+  const handleDcaChange = (e) => {
+    const value = e.target.value;
+    if (value >= 0 || value === '') {
+      setDcaAmount(value);
+      if (value && btcPrice && riskMetric !== null) {
+        const usd = Number(value) * (1 + riskMetric);
+        setRecommendedUsd(usd);
+        setRecommendedBtc(usd / btcPrice);
+      } else {
+        setRecommendedUsd(null);
+        setRecommendedBtc(null);
+      }
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 sm:p-6 lg:p-8">
+      <div className="bg-white p-6 sm:p-8 rounded-lg shadow-lg w-full max-w-md sm:max-w-lg lg:max-w-4xl">
+        <h1 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-gray-800">
+          Bitcoin DCA Calculator
+        </h1>
+        {error && (
+          <p className="text-red-500 text-center mb-6 font-medium">{error}</p>
+        )}
+        <div className="mb-6">
+          <label className="block text-gray-700 font-medium mb-2 text-sm sm:text-base">
+            Enter DCA Amount (USD):
+          </label>
+          <input
+            type="number"
+            value={dcaAmount}
+            onChange={handleDcaChange}
+            placeholder="e.g., 100"
+            min="0"
+            className="w-full p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm sm:text-base"
+          />
+        </div>
+        {btcPrice && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                Current BTC Price:{' '}
+                <span className="font-medium">${btcPrice.toLocaleString()}</span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                30-Day Price Change:{' '}
+                <span
+                  className={`font-medium ${
+                    priceChange30d >= 0 ? 'text-green-500' : 'text-red-500'
+                  }`}
+                >
+                  {priceChange30d?.toFixed(2)}%
+                </span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                Risk Metric:{' '}
+                <span className="font-medium">{riskMetric?.toFixed(2)}</span>{' '}
+                <span className="text-gray-500">
+                  ({riskMetric > 0 ? 'Buy more' : riskMetric < 0 ? 'Buy less' : 'Neutral'})
+                </span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                Confidence Level:{' '}
+                <span className="font-medium">{confidence} / 9</span>{' '}
+                <span className="text-gray-500">
+                  ({confidence <= 3 ? 'Low' : confidence <= 6 ? 'Medium' : 'High'})
+                </span>
+              </p>
+            </div>
+            {recommendedUsd && (
+              <>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-gray-700 text-sm sm:text-base">
+                    Recommended Purchase:{' '}
+                    <span className="font-medium">${recommendedUsd.toFixed(2)}</span>
+                  </p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-gray-700 text-sm sm:text-base">
+                    BTC Amount:{' '}
+                    <span className="font-medium">{recommendedBtc.toFixed(8)} BTC</span>
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {!btcPrice && !error && (
+          <p className="text-gray-500 text-center text-sm sm:text-base">
+            Loading Bitcoin data...
+          </p>
+        )}
+        <div className="mt-6">
+          <button
+            onClick={() => setShowExplanation(!showExplanation)}
+            className="w-full p-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm sm:text-base"
+          >
+            {showExplanation ? 'Hide Explanation' : 'How Does This Work?'}
+          </button>
+          {showExplanation && (
+            <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
+              <h2 className="text-lg font-semibold mb-2">How the Risk Metric Works</h2>
+              <p className="mb-2">
+                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It combines Bitcoin’s 30-day price change with a moving average to capture medium-term trends and includes a confidence level to show how reliable the signal is.
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  <strong>Calculation</strong>:
+                  <ul className="list-circle pl-5 mt-1">
+                    <li>We calculate the 30-day price change percentage (e.g., -20% if the price dropped, +20% if it rose).</li>
+                    <li>A 30-day simple moving average (SMA) of daily price changes smooths short-term noise, making the metric more stable.</li>
+                    <li>The risk metric is computed as <code>tanh(-(price change + SMA) / 40)</code>, scaled between -1 (buy less) and +1 (buy more).</li>
+                    <li>A large price drop (e.g., -20%) yields a positive metric (e.g., ~0.8), suggesting you buy more.</li>
+                    <li>A large price rise (e.g., +20%) yields a negative metric (e.g., ~-0.8), suggesting you buy less.</li>
+                    <li>A stable price (near 0%) yields a metric near 0, recommending your usual DCA amount.</li>
+                    <li>A confidence parameter (1–9) reflects market volatility, calculated from the standard deviation of daily price changes. Higher volatility lowers confidence (e.g., 1–3), while stable markets increase it (e.g., 7–9).</li>
+                  </ul>
+                </li>
+                <li>
+                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount, then converted to BTC using the current price.
+                </li>
+                <li>
+                  <strong>Why This Approach?</strong>: The 30-day timeframe, combined with the SMA, captures medium-term market cycles, similar to approaches used by analysts like Benjamin Cowen. The confidence parameter adds reliability, helping you make informed DCA decisions.
+                </li>
+                <li>
+                  <strong>Note</strong>: This metric is inspired by advanced risk metrics like those on TradingView or Into The Cryptoverse but simplified for accessibility. It may align with these metrics during significant market trends. Social sentiment data (e.g., Twitter activity) could further enhance accuracy but requires additional APIs.
+                </li>
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;-e 
+===== End of /Users/vinaylal/Documents/sites/btc-dca-app/src/App.jsx =====
+

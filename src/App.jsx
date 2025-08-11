@@ -5,9 +5,9 @@ import './App.css';
 function App() {
   const [dcaAmount, setDcaAmount] = useState('');
   const [btcPrice, setBtcPrice] = useState(null);
-  const [priceChange30d, setPriceChange30d] = useState(null);
-  const [riskMetric, setRiskMetric] = useState(null);
-  const [confidence, setConfidence] = useState(null);
+  const [riskScore, setRiskScore] = useState(null);
+  const [maxDeviation, setMaxDeviation] = useState(null);
+  const [sma200Day, setSma200Day] = useState(null);
   const [recommendedUsd, setRecommendedUsd] = useState(null);
   const [recommendedBtc, setRecommendedBtc] = useState(null);
   const [error, setError] = useState(null);
@@ -16,29 +16,42 @@ function App() {
   useEffect(() => {
     const fetchBtcData = async () => {
       try {
-        const response = await axios.get(
+        // Fetch current price
+        const priceResponse = await axios.get(
           'https://api.coingecko.com/api/v3/coins/bitcoin?sparkline=false'
         );
-        const { market_data } = response.data;
-        setBtcPrice(market_data.current_price.usd);
-        setPriceChange30d(market_data.price_change_percentage_30d);
+        const currentPrice = priceResponse.data.market_data.current_price.usd;
+        setBtcPrice(currentPrice);
 
-        // Simplified SMA: Assume daily price change is priceChange30d / 30
-        const dailyChange = market_data.price_change_percentage_30d / 30;
-        const sma = dailyChange; // Placeholder: In reality, fetch daily prices for true SMA
-        const combinedMetric = (market_data.price_change_percentage_30d + sma) / 2;
+        // Fetch 200 days of historical prices for 200-day SMA
+        const historyResponse = await axios.get(
+          'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart',
+          {
+            params: {
+              vs_currency: 'usd',
+              days: 200, // Changed from 1400 to 200 days
+              interval: 'daily',
+            },
+          }
+        );
+        const prices = historyResponse.data.prices.map(([timestamp, price]) => price);
 
-        // Fixed risk metric: Negate combinedMetric to align with "Buy more" on price drops
-        const risk = Math.tanh(-combinedMetric / 40);
-        setRiskMetric(risk);
+        // Calculate 200-day SMA (average of 200 daily prices)
+        const sma = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+        setSma200Day(sma);
 
-        // Confidence parameter: Based on volatility (absolute priceChange30d)
-        const volatility = Math.abs(market_data.price_change_percentage_30d);
-        let confidenceLevel;
-        if (volatility > 30) confidenceLevel = 3; // High volatility, low confidence
-        else if (volatility > 15) confidenceLevel = 5; // Medium volatility
-        else confidenceLevel = 8; // Low volatility, high confidence
-        setConfidence(confidenceLevel);
+        // Calculate max deviation from SMA
+        const deviations = prices.map(price => Math.abs(price - sma));
+        const maxDev = Math.max(...deviations);
+        setMaxDeviation(maxDev);
+
+        // Calculate risk score: (current_price - SMA) / max_deviation
+        // Normalize to 0–1 using a linear scaling approach
+        const rawRisk = (currentPrice - sma) / maxDev;
+        // Scale to 0–1: if rawRisk > 1, cap at 1; if < -1, map to 0
+        const normalizedRisk = Math.min(1, Math.max(0, (rawRisk + 1) / 2));
+        setRiskScore(normalizedRisk);
+
       } catch (err) {
         setError('Failed to fetch Bitcoin data. Please try again.');
       }
@@ -50,8 +63,8 @@ function App() {
     const value = e.target.value;
     if (value >= 0 || value === '') {
       setDcaAmount(value);
-      if (value && btcPrice && riskMetric !== null) {
-        const usd = Number(value) * (1 + riskMetric);
+      if (value && btcPrice && riskScore !== null) {
+        const usd = Number(value) * (1 - riskScore);
         setRecommendedUsd(usd);
         setRecommendedBtc(usd / btcPrice);
       } else {
@@ -93,32 +106,23 @@ function App() {
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                30-Day Price Change:{' '}
-                <span
-                  className={`font-medium ${
-                    priceChange30d >= 0 ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {priceChange30d?.toFixed(2)}%
+                200-Day SMA:{' '}
+                <span className="font-medium">${sma200Day?.toLocaleString()}</span>
+              </p>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg">
+              <p className="text-gray-700 text-sm sm:text-base">
+                Risk Score:{' '}
+                <span className="font-medium">{riskScore?.toFixed(2)}</span>{' '}
+                <span className="text-gray-500">
+                  ({riskScore > 0.7 ? 'Buy less' : riskScore < 0.3 ? 'Buy more' : 'Neutral'})
                 </span>
               </p>
             </div>
             <div className="p-4 bg-gray-50 rounded-lg">
               <p className="text-gray-700 text-sm sm:text-base">
-                Risk Metric:{' '}
-                <span className="font-medium">{riskMetric?.toFixed(2)}</span>{' '}
-                <span className="text-gray-500">
-                  ({riskMetric > 0 ? 'Buy more' : riskMetric < 0 ? 'Buy less' : 'Neutral'})
-                </span>
-              </p>
-            </div>
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <p className="text-gray-700 text-sm sm:text-base">
-                Confidence Level:{' '}
-                <span className="font-medium">{confidence} / 9</span>{' '}
-                <span className="text-gray-500">
-                  ({confidence <= 3 ? 'Low' : confidence <= 6 ? 'Medium' : 'High'})
-                </span>
+                Max Deviation from SMA:{' '}
+                <span className="font-medium">${maxDeviation?.toLocaleString()}</span>
               </p>
             </div>
             {recommendedUsd && (
@@ -153,31 +157,27 @@ function App() {
           </button>
           {showExplanation && (
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
-              <h2 className="text-lg font-semibold mb-2">How the Risk Metric Works</h2>
+              <h2 className="text-lg font-semibold mb-2">How the Risk Score Works</h2>
               <p className="mb-2">
-                The risk metric helps you decide how much Bitcoin to buy based on market conditions over the past 30 days. It combines Bitcoin’s 30-day price change with a moving average to capture medium-term trends and includes a confidence level to show how reliable the signal is.
+                The risk score helps you decide how much Bitcoin to buy based on its current price relative to the 200-day simple moving average (SMA), a medium-term trend indicator.
               </p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>
                   <strong>Calculation</strong>:
                   <ul className="list-circle pl-5 mt-1">
-                    <li>We calculate the 30-day price change percentage (e.g., -20% if the price dropped, +20% if it rose).</li>
-                    <li>A 30-day simple moving average (SMA) of daily price changes smooths short-term noise, making the metric more stable.</li>
-                    <li>The risk metric is computed as <code>tanh(-(price change + SMA) / 40)</code>, scaled between -1 (buy less) and +1 (buy more).</li>
-                    <li>A large price drop (e.g., -20%) yields a positive metric (e.g., ~0.8), suggesting you buy more.</li>
-                    <li>A large price rise (e.g., +20%) yields a negative metric (e.g., ~-0.8), suggesting you buy less.</li>
-                    <li>A stable price (near 0%) yields a metric near 0, recommending your usual DCA amount.</li>
-                    <li>A confidence parameter (1–9) reflects market volatility, calculated from the standard deviation of daily price changes. Higher volatility lowers confidence (e.g., 1–3), while stable markets increase it (e.g., 7–9).</li>
+                    <li>We fetch the current Bitcoin price and 200 days of daily prices from CoinGecko.</li>
+                    <li>The 200-day SMA is the average price over these 200 days.</li>
+                    <li>The maximum deviation is the largest absolute difference between any daily price and the SMA.</li>
+                    <li>The risk score is calculated as <code>(current price - 200-day SMA) / max deviation</code>.</li>
+                    <li>This is normalized to a 0–1 scale: 0 means the price is far below the SMA (buy more), 1 means far above (buy less).</li>
+                    <li>Your DCA amount (USD) is multiplied by <code>(1 - risk score)</code> to get the recommended purchase amount, then converted to BTC.</li>
                   </ul>
                 </li>
                 <li>
-                  <strong>Formula</strong>: Your input DCA amount (in USD) is multiplied by <code>(1 + risk metric)</code> to get the recommended purchase amount, then converted to BTC using the current price.
+                  <strong>Why This Approach?</strong>: The 200-day SMA is a widely used indicator for medium-term Bitcoin trends. Buying more when the price is below the SMA and less when above aligns with value-based DCA strategies.
                 </li>
                 <li>
-                  <strong>Why This Approach?</strong>: The 30-day timeframe, combined with the SMA, captures medium-term market cycles, similar to approaches used by analysts like Benjamin Cowen. The confidence parameter adds reliability, helping you make informed DCA decisions.
-                </li>
-                <li>
-                  <strong>Note</strong>: This metric is inspired by advanced risk metrics like those on TradingView or Into The Cryptoverse but simplified for accessibility. It may align with these metrics during significant market trends. Social sentiment data (e.g., Twitter activity) could further enhance accuracy but requires additional APIs.
+                  <strong>Note</strong>: The risk score assumes the max deviation reflects the market’s historical range. Extreme market events may affect accuracy, and future enhancements could include volatility-based confidence metrics.
                 </li>
               </ul>
             </div>
