@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
+const MIN_MULTIPLIER = 0.5;
+const MAX_MULTIPLIER = 1.5;
+
 function App() {
   const [dcaAmount, setDcaAmount] = useState('');
   const [btcPrice, setBtcPrice] = useState(null);
@@ -24,35 +27,63 @@ function App() {
         setBtcPrice(currentPrice);
 
         // Fetch 200 days of historical prices for 200-day SMA
+        const apiKey = import.meta.env.VITE_CG_DEMO_API_KEY;
         const historyResponse = await axios.get(
           'https://api.coingecko.com/api/v3/coins/bitcoin/market_chart',
           {
             params: {
               vs_currency: 'usd',
-              days: 200, // Changed from 1400 to 200 days
+              days: 200, // request the latest 200 daily data points
               interval: 'daily',
+              precision: 'full',
+              ...(apiKey ? { x_cg_demo_api_key: apiKey } : {}),
             },
           }
         );
-        const prices = historyResponse.data.prices.map(([timestamp, price]) => price);
+        const pricePoints = historyResponse.data?.prices || [];
+        if (!Array.isArray(pricePoints) || pricePoints.length === 0) {
+          setError('Failed to load historical price data for SMA.');
+          return;
+        }
 
-        // Calculate 200-day SMA (average of 200 daily prices)
-        const sma = prices.reduce((sum, price) => sum + price, 0) / prices.length;
+        if (pricePoints.length < 30) {
+          setError('Not enough data to compute SMA.');
+          return;
+        }
+
+        const prices = pricePoints.map(([, price]) => price);
+        const recentPrices = prices.slice(-200);
+
+        // Calculate 200-day SMA (average of the latest daily prices)
+        const sma =
+          recentPrices.reduce((sum, price) => sum + price, 0) /
+          (recentPrices.length || 1);
+        console.debug('BTC SMA calculation', {
+          pointsUsed: recentPrices.length,
+          firstDate: new Date(pricePoints[0][0]).toISOString(),
+          lastDate: new Date(pricePoints[pricePoints.length - 1][0]).toISOString(),
+          sma,
+        });
         setSma200Day(sma);
 
-        // Calculate max deviation from SMA
-        const deviations = prices.map(price => Math.abs(price - sma));
-        const maxDev = Math.max(...deviations);
+        // Calculate max deviation from SMA across the SMA window
+        const deviations = recentPrices.map(price => Math.abs(price - sma));
+        const maxDev = deviations.length ? Math.max(...deviations) : 0;
         setMaxDeviation(maxDev);
 
-        // Calculate risk score: (current_price - SMA) / max_deviation
-        // Normalize to 0–1 using a linear scaling approach
-        const rawRisk = (currentPrice - sma) / maxDev;
-        // Scale to 0–1: if rawRisk > 1, cap at 1; if < -1, map to 0
-        const normalizedRisk = Math.min(1, Math.max(0, (rawRisk + 1) / 2));
-        setRiskScore(normalizedRisk);
+        // Calculate risk score using normalized deviation from SMA
+        if (!maxDev || maxDev < Number.EPSILON) {
+          setRiskScore(0.5);
+          return;
+        }
+
+        const rawDeviation = (currentPrice - sma) / maxDev;
+        const clampedDeviation = Math.max(-1, Math.min(1, rawDeviation));
+        const computedRiskScore = 0.5 + 0.5 * clampedDeviation;
+        setRiskScore(computedRiskScore);
 
       } catch (err) {
+        console.error('Failed to fetch Bitcoin data', err);
         setError('Failed to fetch Bitcoin data. Please try again.');
       }
     };
@@ -64,7 +95,10 @@ function App() {
     if (value >= 0 || value === '') {
       setDcaAmount(value);
       if (value && btcPrice && riskScore !== null) {
-        const usd = Number(value) * (1 - riskScore);
+        const baseDcaUsd = Number(value);
+        const multiplier =
+          MIN_MULTIPLIER + (1 - riskScore) * (MAX_MULTIPLIER - MIN_MULTIPLIER);
+        const usd = baseDcaUsd * multiplier;
         setRecommendedUsd(usd);
         setRecommendedBtc(usd / btcPrice);
       } else {
@@ -159,22 +193,28 @@ function App() {
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-gray-700 text-sm sm:text-base">
               <h2 className="text-lg font-semibold mb-2">How the Risk Score Works</h2>
               <p className="mb-2">
-                The risk score helps you decide how much Bitcoin to buy based on its current price relative to the 200-day simple moving average (SMA), a medium-term trend indicator.
+                The risk score helps you decide how much Bitcoin to buy based on the current price versus Bitcoin’s 200-day simple moving average (SMA) calculated from CoinGecko’s daily prices.
               </p>
               <ul className="list-disc pl-5 space-y-1">
                 <li>
                   <strong>Calculation</strong>:
                   <ul className="list-circle pl-5 mt-1">
-                    <li>We fetch the current Bitcoin price and 200 days of daily prices from CoinGecko.</li>
-                    <li>The 200-day SMA is the average price over these 200 days.</li>
-                    <li>The maximum deviation is the largest absolute difference between any daily price and the SMA.</li>
-                    <li>The risk score is calculated as <code>(current price - 200-day SMA) / max deviation</code>.</li>
-                    <li>This is normalized to a 0–1 scale: 0 means the price is far below the SMA (buy more), 1 means far above (buy less).</li>
-                    <li>Your DCA amount (USD) is multiplied by <code>(1 - risk score)</code> to get the recommended purchase amount, then converted to BTC.</li>
+                    <li>We fetch the current Bitcoin price and 200 days of daily BTC prices from CoinGecko to compute the 200-day SMA.</li>
+                    <li>The maximum deviation is the largest absolute difference between any daily price in that window and the SMA.</li>
+                    <li>
+                      The risk score compares today’s price to the SMA relative to that maximum deviation:
+                      <code>0.5 + 0.5 * clamp((current price - 200-day SMA) / max deviation, -1, 1)</code>.
+                    </li>
+                    <li>
+                      Scale: <strong>0</strong> = far below the SMA (cheap, leans toward buying more),
+                      <strong>0.5</strong> = near the SMA (neutral), <strong>1</strong> = far above the SMA (expensive, leans toward
+                      buying less).
+                    </li>
+                    <li>Your DCA amount is adjusted with a multiplier between 0.5× and 1.5× before converting to BTC.</li>
                   </ul>
                 </li>
                 <li>
-                  <strong>Why This Approach?</strong>: The 200-day SMA is a widely used indicator for medium-term Bitcoin trends. Buying more when the price is below the SMA and less when above aligns with value-based DCA strategies.
+                  <strong>Why This Approach?</strong>: The 200-day SMA is a widely used indicator for medium-term Bitcoin trends. When BTC is cheap relative to its 200-day trend, the multiplier can suggest buying more than your normal DCA; when it’s expensive, it can suggest buying less.
                 </li>
                 <li>
                   <strong>Note</strong>: The risk score assumes the max deviation reflects the market’s historical range. Extreme market events may affect accuracy, and future enhancements could include volatility-based confidence metrics.
